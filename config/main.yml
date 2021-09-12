@@ -1,0 +1,4 @@
+name: "default"
+logging: !include logging.yml
+server: !include server.yml
+ticker: "ETH"
