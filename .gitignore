@@ -112,5 +112,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-
+filters/output/*.png
+*.png
 .env
+
+
