@@ -64,7 +64,7 @@ from filters.filter_types.generator import FiltersGenerator
 from dotenv import load_dotenv, find_dotenv
 
 try:
-    load_dotenv(dotenv_path=directories.app /".env" ) #find_dotenv(raise_error_if_not_found=True)
+    load_dotenv(dotenv_path=directories.app /'..'/".env" ) #find_dotenv(raise_error_if_not_found=True)
 except OSError:
     raise RuntimeError("'.env' file not found.")
 
