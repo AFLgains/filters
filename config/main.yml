@@ -1,4 +1,5 @@
 name: "default"
 logging: !include logging.yml
 server: !include server.yml
-ticker: "ETH"
+mode: 'live' #train, live, schedule
+send_email: True # True, False

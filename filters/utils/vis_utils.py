@@ -102,7 +102,7 @@ def visualise_buy_sells(strat_name, actual_price_history, true_vel, pos, vel, re
         cellColours=cellColours,
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(16)
+    table.set_fontsize(24)
     table.scale(1, 4)
 
     axs[4].axis("off")
@@ -111,26 +111,22 @@ def visualise_buy_sells(strat_name, actual_price_history, true_vel, pos, vel, re
 
 
 def vis_live_price(
-    price,
-    estimate,
+    price_history_df,
+    dates,
+    pos_estimate,
+    vel_estimate,
     strats,
-    n_days=400,
+    n_days=50,
     ticker="",
     output_filename="output/live.png",
 ):
-    price_history_df = price.price_history_df
-    dates = price.dates
-    pos_estimate = estimate.pos_estimate
-    vel_estimate = estimate.vel_estimate
 
     price_history_list = list(price_history_df["close"])
-    price_history_df.loc[:, "volume"] = price_history_df.loc[:, "volumeto"]
+    price_history_df["volume"] = price_history_df["volumeto"]
     price_history_df = price_history_df[
         ["date", "open", "high", "low", "close", "volume"]
     ]
-    price_history_df.loc[:, "date"] = price_history_df.loc[:, "date"].apply(
-        mdates.date2num
-    )
+    price_history_df["date"] = price_history_df["date"].apply(mdates.date2num)
 
     price_history_list = price_history_list[-n_days:]
     dates = dates[-n_days:]
@@ -163,11 +159,10 @@ def vis_live_price(
     )
     for i in range(len(strats)):
         axs[0].plot(dates, pos_estimate[i], label=strats[i].name)
-    axs[0].set_ylabel("Log Price (USD)")
+    axs[0].set_ylabel("Price (USD)")
     axs[0].grid(color="grey", linestyle="--", linewidth=0.5)
     axs[0].legend(loc="upper left")
     axs[0].tick_params(labelbottom=False)
-    axs[0].set_yscale("log")
 
     ax1v = axs[0].twinx()
     ax1v.fill_between(

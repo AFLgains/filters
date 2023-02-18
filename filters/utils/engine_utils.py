@@ -1,25 +1,16 @@
 import datetime
 import pytz
-import os
-import logging
 import numpy as np
 import cryptocompare
 import pandas as pd
 from typing import List, Dict
 from filters.filter_types.filters import is_buy
 import smtplib, ssl
-from types import SimpleNamespace
+import email
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from types import SimpleNamespace
-from filters.config.constants import (EMAIL_DISCLAIMER, EMAIL_SUBJECT, EMAIL_TICKER,
-                                      EMAIL_DATAAGE, EMAIL_NEXTDATA, EMAIL_CURRENTPRICE,
-                                      EMAIL_TABLEHEADER,EMAIL_LINE,_EMAIL_TABLE_FORMAT,
-                                      EMPTY_PORTFOLIO, FULL_PORTFOLIO,_EMAIL_TABLE_FORMAT_FLOAT)
-
-logger = logging.getLogger(__name__)
 
 
 def get_time_stats():
@@ -36,157 +27,197 @@ def get_time_stats():
     return current_time_str, hrs_old, new_data_hrs
 
 
-def set_api_key(api_key):
+def get_price_history(ticker, api_key):
+
     cryptocompare.cryptocompare._set_api_key_parameter(api_key)
 
-
-def end_date(delta=1):
-    return datetime.date.today() + datetime.timedelta(days=delta)
-
-
-def return_price_history_df(ticker,fiat = "USD",limit = 2000):
-    download = pd.DataFrame.from_dict(
-        cryptocompare.get_historical_price_day(
-            ticker,
-            fiat,
-            limit=limit,
-            toTs=end_date(),
-        )
-    )
-    download.loc[:, "date"] = pd.to_datetime(download.loc[:, "time"], unit="s")
-    return download
-
-
-def get_price_history(ticker, api_key):
-    set_api_key(api_key)
-    price_history_df = return_price_history_df(ticker)
-    return SimpleNamespace(
-        price_history_list=list(price_history_df["close"]),
-        dates=price_history_df["date"],
-        price_history_df=price_history_df,
+    price_history = cryptocompare.get_historical_price_day(
+        ticker,
+        "USD",
+        limit=2000,
+        toTs=datetime.date.today() + datetime.timedelta(days=1),
     )
 
-def gen_email_header(price_history_list: List, ticker: str):
+    price_history_df = pd.DataFrame.from_dict(price_history)
+    price_history_df["date"] = pd.to_datetime(price_history_df["time"], unit="s")
+
+    price_history_list = list(price_history_df["close"])
+    dates = price_history_df["date"]
+
+    return price_history_list, dates, price_history_df
+
+
+def get_best_params_kf():
+    best_params = {
+        "target": 0.6363636363636364,
+        "params": {
+            "R": 8.620806302527626,
+            "qxx": -2.801193802955954,
+            "qxy": 0.1,
+            "qyy": -5.816125425616493,
+        },
+    }
+    R = best_params["params"]["R"]
+    qxx = best_params["params"]["qxx"]
+    qxy = best_params["params"]["qxy"]
+    qyy = best_params["params"]["qyy"]
+    Q = np.array([[np.exp(qxx), qxy], [qxy, np.exp(qyy)]])
+    P = 10
+
+    return R, P, Q
+
+
+def get_best_params_kf3():
+    best_params = {
+        "target": -93.43627695287812,
+        "params": {
+            "R": 14.384648571446771,
+            "h1": 0.1,
+            "h2": 0.0,
+            "qxx": -2.0,
+            "qxy": 0.1,
+            "qyy": -7.36893143479458,
+            "x1": 0.1,
+            "x2": 0.1,
+            "x3": 0.1,
+        },
+    }
+    R = best_params["params"]["R"]
+    qxx = best_params["params"]["qxx"]
+    qxy = best_params["params"]["qxy"]
+    qyy = best_params["params"]["qyy"]
+    h1 = best_params["params"]["h1"]
+    h2 = best_params["params"]["h2"]
+    x1 = best_params["params"]["x1"]
+    x2 = best_params["params"]["x2"]
+    x3 = best_params["params"]["x3"]
+
+    P = 10
+    Q = np.array([[np.exp(qxx), qxy], [qxy, np.exp(qyy)]])
+    THETA = np.array([[x1, x2], [0, x3]])
+    H = np.array([[h1, h2]])
+
+    return R, P, Q, H, THETA
+
+
+def vis_live_strats(price_history_list: List, strats: List, ticker: str) -> str:
     current_time_str, hrs_old, new_data_hrs = get_time_stats()
+
+    t = len(price_history_list)
+    pos_estimate = []
+    vel_estimate = []
     email_message = ""
-    email_message += EMAIL_TICKER.format(ticker = ticker)
-    email_message += EMAIL_SUBJECT.format(current_time_str = current_time_str)
-    email_message += EMAIL_DATAAGE.format(hrs = round(hrs_old.seconds / 3600, 2))
-    email_message += EMAIL_NEXTDATA.format(hrs = round(new_data_hrs.seconds/ 3600, 2))
-    email_message += EMAIL_CURRENTPRICE.format(price = price_history_list[-1])
-    email_message += EMAIL_TABLEHEADER
-    email_message += EMAIL_LINE
-    return email_message
-
-def get_last_pos_vel(strat, price_history_list):
-    pos, vel, cov = strat.calc_momentum(price_history=price_history_list)
-    return pos[-1], vel[-1], cov[-1]
-
-def buy_signal_out_eth(pos, vel, cov):
-    buy_signal, _ = is_buy(pos, vel, cov, FULL_PORTFOLIO)
-    return "buy" if buy_signal else "HODL CASH"
-
-def sell_signal_in_eth(pos, vel, cov):
-    _, sell_signal = is_buy(pos, vel, cov, EMPTY_PORTFOLIO)
-    return "sell" if sell_signal else "HODL ETH"
-
-def gen_email_body(price_history_list, strats):
-    email_message=""
+    email_message += f"\nTicker: {ticker}"
+    email_message += f"\nCurrent GMT time is: {current_time_str}"
+    email_message += f"\nData pulled is {round(hrs_old.seconds / 3600, 2)} hrs old"
+    email_message += (
+        f"\nNew daily price pulled in {round(new_data_hrs.seconds / 3600, 2)} hrs"
+    )
+    email_message += f"\nCurrent price: {price_history_list[t - 1]}"
+    email_message += "\n%-10s | %-10s | %-10s | %-10s | %-10s" % (
+        "Strat",
+        "Price",
+        "Vel",
+        "If in..",
+        "If out..(Cash)",
+    )
+    email_message += "\n------------------------------------------------------------"
     for strat in strats:
-        price_stats=get_last_pos_vel(strat, price_history_list)
-        signal_if_out = buy_signal_out_eth(*price_stats)
-        signal_if_in = sell_signal_in_eth(*price_stats)
-        email_message += _EMAIL_TABLE_FORMAT_FLOAT % (
+        pos, vel, cov = strat.calc_momentum(price_history=price_history_list)
+        buy_signal_in_eth, sell_signal_in_eth = is_buy(
+            pos[t - 1], vel[t - 1], cov[t - 1], {"current_cash": 0}
+        )
+        buy_signal_out_eth, sell_signal_out_eth = is_buy(
+            pos[t - 1], vel[t - 1], cov[t - 1], {"current_cash": 1}
+        )
+
+        if buy_signal_out_eth:
+            signal_if_out = "buy"
+        else:
+            signal_if_out = "HODL cash"
+
+        if sell_signal_in_eth:
+            signal_if_in = "sell"
+        else:
+            signal_if_in = "HODL"
+
+        email_message += "\n%-10s | %-10.1f | %-10.1f | %-10s | %-10s" % (
             strat.name,
-            price_stats[0],
-            price_stats[1],
+            pos[t - 1],
+            vel[t - 1],
             signal_if_in,
             signal_if_out,
         )
-    return email_message
+        pos_estimate.append(pos)
+        vel_estimate.append(vel)
 
-def gen_email_disclaimer():
-    return EMAIL_DISCLAIMER
+    email_message += (
+        "\n\nThese emails are for education and entertainment purposes only,"
+        " not financial advice. It is not intended as a substitute for professional"
+        " financial, legal or tax advice. I am not a financial professional and "
+        "am not aware of your personal financial circumstances. I don't recommend "
+        "you follow any recommendations provided by the tracker, either in the past "
+        "or in the future. In fact, it would be unreasonable to rely on this "
+        "information for any purpose whatsoever."
+    )
 
-def gen_email_subject():
-    current_time_str, _, _ = get_time_stats()
-    return EMAIL_SUBJECT.format(current_time_str = current_time_str)
-
-def vis_live_strats(price_history_list: List, strats: List, ticker: str) -> str:
-    email_header = gen_email_header(price_history_list, ticker)
-    email_body = gen_email_body(price_history_list, strats)
-    disclaimer = gen_email_disclaimer()
-    email_subject = gen_email_subject()
-    email_message = email_header + email_body + disclaimer
     print(email_message)
-    pos_estimate = [strat.calc_momentum(price_history=price_history_list)[0] for strat in strats]
-    vel_estimate = [strat.calc_momentum(price_history=price_history_list)[1] for strat in strats]
-    return SimpleNamespace(pos_estimate = pos_estimate, vel_estimate = vel_estimate),\
-           SimpleNamespace(email_message=email_message, email_subject = email_subject)
+    email_subject = f"ETH PRICE VELOCITY UPDATE: {current_time_str}"
+    return pos_estimate, vel_estimate, email_message, email_subject
 
 
 def send_email(
-    output_filename,
-    password,
-    mailing_list,
-    email_content,
-    email: bool = False,
+    output_filename, password, mailing_list, message_str=None, subject_str=None
 ):
-    message_str = email_content.email_message
-    subject_str = email_content.email_subject
-    if email:
-        sender_email = "ethtracker1989@gmail.com"
 
-        if message_str is None:
-            message_str = """\
-            Subject: Hi there
-    
-            This message is sent from Python."""
+    sender_email = "ethtracker1989@gmail.com"
 
-        if subject_str is None:
-            subject_str = "Test"
+    if message_str is None:
+        message_str = """\
+        Subject: Hi there
 
-        port = 465  # For SSL
+        This message is sent from Python."""
 
-        # Create a secure SSL context
-        context = ssl.create_default_context()
+    if subject_str is None:
+        subject_str = "Test"
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", port, context=context) as server:
-            server.login("ethtracker1989@gmail.com", password)
-            for re in mailing_list:
-                # Create a multipart message and set headers
-                message = MIMEMultipart()
-                message["From"] = sender_email
-                message["To"] = re
-                message["Subject"] = subject_str
+    port = 465  # For SSL
 
-                # Add body to email
-                message.attach(MIMEText(message_str, "plain"))
+    # Create a secure SSL context
+    context = ssl.create_default_context()
 
-                filename = output_filename  # In same directory as script
+    with smtplib.SMTP_SSL("smtp.gmail.com", port, context=context) as server:
+        server.login("ethtracker1989@gmail.com", password)
+        for re in mailing_list:
+            # Create a multipart message and set headers
+            message = MIMEMultipart()
+            message["From"] = sender_email
+            message["To"] = re
+            message["Subject"] = subject_str
 
-                # Open PDF file in binary mode
-                with open(filename, "rb") as attachment:
-                    # Add file as application/octet-stream
-                    # Email client can usually download this automatically as attachment
-                    part = MIMEBase("application", "octet-stream")
-                    part.set_payload(attachment.read())
+            # Add body to email
+            message.attach(MIMEText(message_str, "plain"))
 
-                # Encode file in ASCII characters to send by email
-                encoders.encode_base64(part)
+            filename = output_filename  # In same directory as script
 
-                # Add header as key/value pair to attachment part
-                part.add_header(
-                    "Content-Disposition",
-                    f"attachment; filename= {filename}",
-                )
+            # Open PDF file in binary mode
+            with open(filename, "rb") as attachment:
+                # Add file as application/octet-stream
+                # Email client can usually download this automatically as attachment
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(attachment.read())
 
-                # Add attachment to message and convert message to string
-                message.attach(part)
-                text = message.as_string()
+            # Encode file in ASCII characters to send by email
+            encoders.encode_base64(part)
 
-                server.sendmail(sender_email, re, text)
+            # Add header as key/value pair to attachment part
+            part.add_header(
+                "Content-Disposition",
+                f"attachment; filename= {filename}",
+            )
 
+            # Add attachment to message and convert message to string
+            message.attach(part)
+            text = message.as_string()
 
-def parse_email_list(email_list):
-    return os.environ.get("MAILING_LIST").split(";") or email_list.split(";")
+            server.sendmail(sender_email, re, text)

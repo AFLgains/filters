@@ -13,11 +13,16 @@ formatters:
 
 handlers:
     console:
-        class: logging.StreamHandler
+        class: filters.utils.color_logger.ColorHandler
         level: DEBUG
         formatter: console
         stream: ext://sys.stdout
-
+        colors:
+          debug: magenta
+          info: cyan
+          warning: yellow
+          error: red
+          critical: red
 
     file_handler:
         class: logging.handlers.RotatingFileHandler
@@ -27,6 +32,18 @@ handlers:
         maxBytes: 10485760 # 10MB
         backupCount: 20
         encoding: utf8
+
+#   network_handler:
+#     class: logging.handlers.SysLogHandler
+#     level: DEBUG
+#     formatter: network
+#     address: localhost
+
+#  windows_handler:
+#    class: logging.handlers.NTEventLogHandler
+#    level: DEBUG
+#    appname: sampleProject
+#    logtype: 'Application'
 
 root:
     level: DEBUG

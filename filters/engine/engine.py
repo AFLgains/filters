@@ -35,13 +35,14 @@ import schedule
 import os
 
 from filters.utils.config import Config
+from filters.utils.timing import timing
 from filters.utils.engine_utils import (
+    get_best_params_kf,
+    get_best_params_kf3,
     get_price_history,
     vis_live_strats,
     send_email,
 )
-from filters.filter_types.filter_tune import get_best_params_kf, get_best_params_kf3
-
 from filters.filter_types.filters import (
     moving_average,
     diff_moving_average,
@@ -54,19 +55,9 @@ from filters.filter_types.filters import (
     rsi,
     kalman_filter_package,
 )
-from filters.utils.engine_utils import parse_email_list
+
+
 from filters.utils import vis_utils
-from filters.config.constants import _BASE_FILE_NAME, PASSWORD, API_KEY, TIME_TO_RUN
-from filters.config.directories import directories
-from filters.filter_types import register
-from filters.filter_types.generator import FiltersGenerator
-
-from dotenv import load_dotenv, find_dotenv
-
-try:
-    load_dotenv(dotenv_path=directories.app /'..'/".env" ) #find_dotenv(raise_error_if_not_found=True)
-except OSError:
-    raise RuntimeError("'.env' file not found.")
 
 
 class Engine:
@@ -74,70 +65,116 @@ class Engine:
     config = None  # type: Config
     log = None
 
-    def __init__(self, config: Config, email_list: str = None):
+    def __init__(self, config: Config):
         self.config = config
-        self.ticker = config.ticker
         self.log = logging.getLogger(__name__)
         self.system = os.name
-        self.password = os.environ.get(PASSWORD)
-        self.api_key = os.environ.get(API_KEY)
-        self.mailing_list = parse_email_list(email_list)
-        self.output_filename = directories.output_filename / _BASE_FILE_NAME
-        self.register = register
 
-    def run(self, mode, email):
+        # Get envirionment varibale
+        RECEIVER_EMAIL_LIST = [
+            "ethtracker1989@gmail.com",
+            "jeanette.fung@hotmail.com",
+            "ric.porteous1989@gmail.com",
+        ]
+        self.password = os.environ.get("PASSWORD")
+        self.api_key = os.environ.get("API_KEY")
+        self.ticker = os.environ.get("TICKER")
+        self.mailing_list = RECEIVER_EMAIL_LIST  # TODO: set through environment variable, i.e., os.environ.get("MAILING_LIST")
+        self.output_filename = "/app/filters/output/live.png"
+        if self.system == "nt":
+            self.output_filename = "filters/output/live.png"
+
+    def run(self, mode):
         if mode == "train":
             self.run_train()
         elif mode == "live":
-            return self.run_live(email)
+            self.run_live()
         elif mode == "schedule":
-            self.run_schedule(email)
+            self.run_schedule()
         else:
             self.log.error("Don't know that mode")
-            raise ValueError
 
-    def run_schedule(self, email):
-        self.run_live(email)
+    def run_schedule(self):
+
+        self.run_live()
+
         # Set up run schedule
-        schedule.every().day.at(TIME_TO_RUN).do(self.run_live(email))
+        time_to_run = "00:01"
+        schedule.every().day.at(time_to_run).do(self.run_live)
+
         while True:
             schedule.run_pending()
             time.sleep(1)
 
+    @timing
+    def run_live(self):
 
-    def run_live(self, email):
+        price_history_list, dates, price_history_df = get_price_history(
+            self.ticker, self.api_key
+        )
 
-        price_history = get_price_history(self.ticker, self.api_key)
-        generator = FiltersGenerator(registry=self.register)
-        strats = generator.generate(stock_price_list=price_history.price_history_list)
-        estimates, email_content = vis_live_strats(price_history.price_history_list, strats, self.ticker)
+        R, P, Q = get_best_params_kf()
+        k_filter_opt = kf(stock_price=price_history_list, R=R, P=P, Q=Q, name="kf1")
+        k_filter_vel = kf_velocity(
+            stock_price=price_history_list, R=R, P=P, Q=Q, name="kfvel"
+        )
+        kf_package = kalman_filter_package(
+            stock_price=price_history_list, R=R, Q=Q, name="kf_package"
+        )
+
+        lan_filter =  lanczos(stock_price=price_history_list, n=10, name="lan")
+        ma50 = moving_average(stock_price=price_history_list, n=50, name="ma50")
+        ma40 = moving_average(stock_price=price_history_list, n=20, name="ma40")
+        ma30 = moving_average(stock_price=price_history_list, n=30, name="ma30")
+        ma20 = moving_average(stock_price=price_history_list, n=20, name="ma20")
+        ma10 = moving_average(stock_price=price_history_list, n=10, name="ma10")
+        mad  = diff_moving_average(
+            stock_price=price_history_list, n1=50, n2=20, name="mad"
+        )
+
+        strats = [
+            k_filter_opt,
+            k_filter_vel,
+            kf_package,
+            ma50,
+            ma40,
+            ma30,
+            ma20,
+            ma10,
+            mad,
+            lan_filter,
+        ]
+
+        pos_estimate, vel_estimate, email_message, email_subject = vis_live_strats(
+            price_history_list, strats, self.ticker
+        )
         vis_utils.vis_live_price(
-            price_history,
-            estimates,
+            price_history_df,
+            dates,
+            pos_estimate,
+            vel_estimate,
             strats,
             n_days=100,
             ticker=self.ticker,
             output_filename=self.output_filename,
         )
 
-        send_email(
-            self.output_filename,
-            self.password,
-            self.mailing_list,
-            email_content,
-            email,
-        )
+        if self.config.send_email:
+            send_email(
+                self.output_filename,
+                self.password,
+                self.mailing_list,
+                email_message,
+                email_subject,
+            )
 
-        return email_content
-
-
+    @timing
     def run_train(self):
-        dir_path = os.path.dirname(os.path.realpath(__file__))
-        data_dir = os.path.join(dir_path, "../data/ETH_test.csv")
 
         # Load the price history
-        price_history = pd.read_csv(data_dir)
+        price_history = pd.read_csv("data/LTC_train.csv")
         price_history_list = list(price_history["close"])
+        price_history_list = price_history_list
 
         # Decompose perfectly using a hodrick prescot filter
         true_trend, true_vel = hodrick_prescot(price_history_list, lam=100)
@@ -172,7 +209,7 @@ class Engine:
         )
 
         # Back test all of them
-        for strat in [kf_package, k_filter3, rsi_strat, mad, ma10,  ma30, ma50, lan_filter]:
+        for strat in [kf_package]:
             res, ex_ante_pos, ex_ante_vel = strat.back_test(
                 initial_capital=100, verbose=False, trade_cost=0.005
             )

@@ -3,10 +3,9 @@
 # We are using a super class called trend_detection
 
 from typing import Tuple
+from filters.utils.kalman_filter_utils import *
 import pandas as pd
 from pykalman import KalmanFilter
-
-from filters.utils.kalman_filter_utils import *
 
 
 def is_buy(pos, vel, cov, portfolio):
@@ -82,9 +81,6 @@ class trend_detector:
             self.signal = stock_price
         self.n_data = len(stock_price)
         self.name = name
-
-    def __name__(self):
-        return self.name
 
     def calc_momentum(self, price_history: List):
         pos = price_history
