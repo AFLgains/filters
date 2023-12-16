@@ -11,7 +11,7 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-
+import streamlit as st
 
 def get_time_stats():
     current_time = datetime.datetime.now(datetime.timezone.utc)
@@ -39,6 +39,7 @@ def get_price_history(ticker, api_key):
     )
 
     price_history_df = pd.DataFrame.from_dict(price_history)
+    st.write(price_history_df)
     price_history_df["date"] = pd.to_datetime(price_history_df["time"], unit="s")
 
     price_history_list = list(price_history_df["close"])
