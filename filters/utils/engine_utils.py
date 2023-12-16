@@ -30,7 +30,7 @@ def get_time_stats():
 def get_price_history(ticker, api_key):
 
     cryptocompare.cryptocompare._set_api_key_parameter(api_key)
-
+    st.write(datetime.date.today() + datetime.timedelta(days=1))
     price_history = cryptocompare.get_historical_price_day(
         ticker,
         "USD",

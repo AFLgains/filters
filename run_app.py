@@ -17,8 +17,8 @@ from filters.filter_types.filters import (
 )
 
 TICKER = "ETH"
-API_KEY = "6e89c7206509df377432f33c9359bd07e11cc556b3c0976e4107336a648f4460"
-
+#API_KEY = "6e89c7206509df377432f33c9359bd07e11cc556b3c0976e4107336a648f4460"
+API_KEY = "75fbc1adcdfc8a51b20340be281ec2c3e9607ff7bc1ac57c4b3c8f58b61bce58"
 def run_eth_tracker():
     price_history_list, dates, price_history_df = get_price_history(
         TICKER, API_KEY
