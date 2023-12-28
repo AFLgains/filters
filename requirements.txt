@@ -21,4 +21,4 @@ pykalman==0.9.5
 scipy==1.6.3
 mplfinance==0.12.7a17
 mpl-finance==0.10.1
-
+streamlit==1.18.1
